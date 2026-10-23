@@ -95,9 +95,15 @@ Add `--log-progress` to show prefill, decode, speed, and speculative-acceptance 
 
 ### Gufo Nix toolbox
 
-The additive fork image [`toolboxes/Dockerfile.gufo-nix`](toolboxes/Dockerfile.gufo-nix) builds pinned Gufo with its matching Nix ROCm 7.2.3 stack and developer tools. It includes a validated Qwen3.8-27B F16-to-BF16 projector converter, a host Hermes launcher, live text/image baseline profiling, and the optional synthetic BF16 hipBLASLt tuner. Use a separate `gufo-rocm-nix` container to preserve the existing ROCm 10.0 setup. GPU performance and tuning gains must be measured on the target machine.
+The additive fork image [`toolboxes/Dockerfile.gufo-nix`](toolboxes/Dockerfile.gufo-nix) builds pinned Gufo with its matching Nix ROCm 7.2.3 stack and inherits Gufo's full official Nix development environment for profiling, model downloads and reference evaluation. It includes a validated Qwen3.8-27B projector checker/converter, a host Hermes launcher, live text/image baseline profiling, and the optional synthetic BF16 hipBLASLt tuner. Use a separate `gufo-rocm-nix` container to preserve the existing ROCm 10.0 setup. GPU performance and tuning gains must be measured on the target machine.
 
 See the [Gufo Nix guide](docs/gufo-nix.md) for local builds, fork-owned GHCR publication, model/projector setup, profiling, optional tuning, and rollback.
+
+For an already-built `gufo-rocm-nix` container, [`run_qwen_ablit.sh`](run_qwen_ablit.sh) is the single daily launcher: run it on the host to start/check Qwen 27B and open Hermes. Use `./run_qwen_ablit.sh stop` to release the model and `./run_qwen_ablit.sh status` to show its verified PIDs and API state. Gufo stays running after Hermes exits until you stop it. See [installing it at the original filename](docs/gufo-nix.md#daily-use-with-run_qwen_ablitsh).
+
+To enter the corrected official development environment from the host, use `bash scripts/gufo-nix/develop.sh`. This reuses the existing container and checks that its installed Gufo matches the checkout before acquiring missing development dependencies. Use this route to repair the earlier minimal shell; the complete setup below builds an image and creates a container.
+
+To start the model in the existing container, run `bash scripts/gufo-nix/run-qwen27b.sh` from the host or from inside the Nix Toolbx shell. It starts the 27B server on port 8081 at context 262144 and requires actual text and image completions before reporting success. Add `--replace-flash-next` to gracefully stop only your verified Gufo process for the original Flash Next model before loading 27B. The helper retains matching-runtime memory snapshots and the server log for any failed start. See [starting and checking the existing model setup](docs/gufo-nix.md#start-and-check-the-model-in-the-existing-container).
 
 From a checkout of this fork's `gufo-nix` branch, run the complete Qwen3.8-27B setup on the Fedora host:
 

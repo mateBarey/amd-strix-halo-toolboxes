@@ -111,6 +111,26 @@ with (Path(os.environ['TEST_ROOT'])/'calls.jsonl').open('a') as f:
         self.assertFalse((self.root/'gpu.json').exists())
         self.assertIn(['hermes'], self.calls())
 
+    def test_require_running_never_starts_gufo_and_only_opens_hermes_for_expected_model(self):
+        self.env['GUFO_REQUIRE_RUNNING'] = '1'
+        for model, expected_code in (('qwen38-27b-uncensored', 0),
+                                     ('qwen3.8-flash-next', 1), (None, 1)):
+            with self.subTest(model=model):
+                (self.root/'ready').unlink(missing_ok=True)
+                (self.root/'calls.jsonl').unlink(missing_ok=True)
+                if model is not None:
+                    (self.root/'ready').write_text(model)
+                r = self.run_script()
+                self.assertEqual(r.returncode, expected_code, r.stdout+r.stderr)
+                self.assertFalse((self.root/'gpu.json').exists())
+                self.assertFalse(any(c[0] == 'toolbox' for c in self.calls()))
+                if expected_code == 0:
+                    self.assertIn(['hermes'], self.calls())
+                else:
+                    self.assertEqual(self.calls(), [])
+                    if model is None:
+                        self.assertIn('GUFO_REQUIRE_RUNNING=1', r.stderr)
+
     def test_load_failure_is_reported_before_hermes_configuration(self):
         self.env['TEST_SCENARIO'] = 'load-failure'
         r = self.run_script()
