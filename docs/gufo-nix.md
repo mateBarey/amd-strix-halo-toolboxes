@@ -33,8 +33,13 @@ For the Hermes launcher, `toolbox`, `curl`, `python3`, and `hermes` must be avai
 Use this route when the image and `gufo-rocm-nix` container already exist. Run on the host from the existing checkout:
 
 ```bash
-git -C "$HOME/VMl/gufo-nix-mateBarey-github" pull --ff-only
-bash "$HOME/VMl/gufo-nix-mateBarey-github/scripts/gufo-nix/develop.sh"
+(
+  set -e
+  cd "$HOME/VMl/gufo-nix-mateBarey-github"
+  git fetch origin gufo-nix
+  git merge --ff-only FETCH_HEAD
+  bash scripts/gufo-nix/develop.sh
+)
 ```
 
 The helper uses the container's installed Nix and the updated checkout's locked flake. Before acquiring dependencies it checks that the checkout's Gufo store output is already present and equals the installed `/opt/gufo` output. A mismatch stops the helper. The production Gufo derivation is unchanged by this repair, so the completed Gufo build is reused.

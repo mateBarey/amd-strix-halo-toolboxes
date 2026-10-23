@@ -24,8 +24,10 @@ nix eval --impure --raw --expr '
   assert containsAll official.buildInputs actual.buildInputs;
   assert builtins.elem (builtins.toString toolbox.packages.${system}.default)
     (strings actual.nativeBuildInputs);
-  assert actual.env == official.env;
-  assert official.env ? LD_LIBRARY_PATH && official.env ? TORCH_HOME;
+  # mkDerivation exposes env entries as top-level derivation attributes.
+  assert actual.LD_LIBRARY_PATH == official.LD_LIBRARY_PATH;
+  assert actual.TORCH_HOME == official.TORCH_HOME;
+  assert official.LD_LIBRARY_PATH != "" && official.TORCH_HOME != "";
   assert lib.hasPrefix official.shellHook actual.shellHook;
   assert builtins.all (name:
     builtins.toString toolbox.packages.${system}.${name} ==
