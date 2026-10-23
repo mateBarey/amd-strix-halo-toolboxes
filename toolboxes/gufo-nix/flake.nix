@@ -50,19 +50,26 @@
           runHook postInstallCheck
         '';
       });
-      toolsShell = pkgs.mkShellNoCC {
-        packages = [ withTools pkgs.bashInteractive pkgs.curl pkgs.git pkgs.python3 ];
-        shellHook = ''
-          unset LD_LIBRARY_PATH LD_PRELOAD
+      # Retain upstream's complete compiler, profiling, model-download and
+      # reference-evaluation environment, including its patched ROCr paths,
+      # TORCH_HOME and ccache hook. Only add our matching installed tools.
+      toolsShell = gufo.devShells.${system}.default.overrideAttrs (old: {
+        nativeBuildInputs = [ withTools pkgs.bashInteractive ]
+          ++ (old.nativeBuildInputs or [ ]);
+        shellHook = (old.shellHook or "") + ''
           export GUFO_SOURCE_REVISION=${revision}
+          export GUFO_SOURCE_ROOT=${gufo.outPath}
         '';
-      };
+      });
     in
     assert gufo.rev == revision;
     {
       packages.${system} = {
         default = withTools;
         gufo = withTools;
+        bash-interactive = pkgs.bashInteractive;
+        inherit (gufo.packages.${system})
+          ds4-reference llama-cpp-reference llama-cpp-mtp-reference;
       };
       devShells.${system}.default = toolsShell;
       lib = {

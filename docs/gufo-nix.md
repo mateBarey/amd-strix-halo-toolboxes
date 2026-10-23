@@ -15,6 +15,8 @@ Your existing `gufo-rocm` container and the stock ROCm 10.0 image remain availab
 | Tools | `gufo`, `gufo-kernel-bench`, `tune_hipblaslt`, `gufo-convert-projector`, `gufo-profile`, `gufo-tune-hipblaslt` |
 | Prebuilt developer-shell profile | `/opt/gufo-shell` |
 | Developer flake | `/opt/gufo-toolbox/flake`, with the same source and dependency lock |
+| Official development environment | ROCm PyTorch, Transformers, download/evaluation tools, rocprofiler, debuggers and the upstream compiler environment |
+| Optional benchmark packages | `ds4-reference`, `llama-cpp-reference`, `llama-cpp-mtp-reference` |
 
 The [derived Nix package](../toolboxes/gufo-nix/flake.nix) enables Gufo's tools and wraps the native executables with their matching runtime libraries. It excludes `/opt/rocm` from CMake discovery during the build. This stack is separate from the repository's `rocm-10.0-gufo` image, which tracks a different Gufo/ROCm combination. Avoid importing that image's library paths into this one.
 
@@ -25,6 +27,28 @@ Nix uses a container-owned `/nix/store` and a root daemon. The runtime starts th
 Use a Linux Strix Halo host with working AMD GPU device access, Podman and Toolbx. Follow the project's [host setup guide](https://strix-halo-toolboxes.com/) for host drivers and memory allocation. This image does not change BIOS settings, kernel parameters, power profiles, or host packages.
 
 For the Hermes launcher, `toolbox`, `curl`, `python3`, and `hermes` must be available **on the host**. Keep the model and projector under paths visible inside Toolbx; the examples use the shared home directory. Building the Nix/ROCm closure needs substantial disk space, network access, and time. A small GitHub-hosted runner may run out of disk or memory; local builds use the same recipe.
+
+## Repair the development environment in an existing container
+
+Use this route when the image and `gufo-rocm-nix` container already exist. Run on the host from the existing checkout:
+
+```bash
+git -C "$HOME/VMl/gufo-nix-mateBarey-github" pull --ff-only
+bash "$HOME/VMl/gufo-nix-mateBarey-github/scripts/gufo-nix/develop.sh"
+```
+
+The helper uses the container's installed Nix and the updated checkout's locked flake. Before acquiring dependencies it checks that the checkout's Gufo store output is already present and equals the installed `/opt/gufo` output. A mismatch stops the helper. The production Gufo derivation is unchanged by this repair, so the completed Gufo build is reused.
+
+The earlier image's custom minimal shell omitted upstream development tools. Restoring the official shell requires acquiring those missing dependencies, including its ROCm PyTorch environment. Nix may download or build development dependencies; this is not an image rebuild. The helper retains its development profile under `$HOME/.cache/gufo/nix-devshell/gufo-rocm-nix` and uses the existing container-owned store. It also fetches and retains the exact interactive Bash outputs, with source builds disabled for that Bash step, to avoid Nix's silent fallback after an unsuccessful shell realization.
+
+`GUFO_TOOLBOX_NAME` selects a different existing container. `GUFO_BUILD_CORES` and `GUFO_NIX_MAX_JOBS` bound dependency build parallelism. A command can be run without opening an interactive shell:
+
+```bash
+bash scripts/gufo-nix/develop.sh --command python -c \
+  'import torch, transformers; print(torch.__version__, transformers.__version__)'
+```
+
+Inside the environment, `GUFO_SOURCE_ROOT` points to the exact pinned Gufo source, including its profiling and reference scripts. The inherited ROCr library paths, `TORCH_HOME`, compiler inputs and ccache hook are preserved. This repairs the development environment; a model startup error remains a separate runtime issue.
 
 ## Route A: build locally
 
@@ -77,7 +101,7 @@ Keep the existing `gufo-rocm` container. Toolbx shares your home with the new co
 
 Push these changes to your fork and enable GitHub Actions there. The dedicated workflow is [**Gufo Nix toolbox**](../.github/workflows/gufo-nix.yml). Original upstream polling/publication workflows are guarded against running on forks; use this dedicated workflow for the Nix image.
 
-The workflow first runs CPU tests and builds the actual Fedora/Nix bootstrap using Podman's OCI format, including an authenticated TLS connection to the Nix binary cache. On a relevant default-branch push, it also builds the full image, runs CPU-only image smoke checks, and publishes to **your fork's** GHCR package. Pull requests and feature-branch pushes run CPU and bootstrap checks without publishing. A manual run builds and smoke-tests the full image; select the `publish` input to publish that manual run.
+The workflow first runs CPU tests and builds the actual Fedora/Nix bootstrap using Podman's OCI format, including an authenticated TLS connection to the Nix binary cache. It evaluates the real flake to check preservation of the official development inputs, environment, hooks and baseline outputs, then verifies a small shell remains usable offline after garbage collection. These checks avoid compiling Gufo or ROCm. On a relevant default-branch push, it also builds the full image, runs CPU-only image smoke checks, and publishes to **your fork's** GHCR package. Pull requests and feature-branch pushes run CPU and bootstrap checks without publishing. A manual run builds and smoke-tests the full image; select the `publish` input to publish that manual run.
 
 Published tags are:
 
@@ -110,13 +134,21 @@ toolbox run -c gufo-rocm-nix gufo diagnose --fingerprint --json
 
 Check that the Gufo version reports the pinned revision and that the fingerprint identifies the expected GPU/runtime. Missing GPU devices or denied device access is a host/container-access issue to resolve before trying to load the model. Do not use a successful `--help` invocation as evidence that GPU inference works.
 
-The image also has an optional developer shell, prebuilt with the matching tools. From inside the container:
+New images also have an optional developer shell, prebuilt with Gufo's complete official development inputs and the matching tools. From inside the container:
 
 ```bash
 nix develop /opt/gufo-shell
 ```
 
-This is optional for inference and for the supplied profiling/tuning helpers. To evaluate the source flake instead, use `nix develop path:/opt/gufo-toolbox/flake`; fetching flake metadata may require network access. The shell is deliberately small and does not include PyTorch or Triton.
+This is optional for inference and for the supplied profiling/tuning helpers. To evaluate the image's source flake instead, use `nix develop path:/opt/gufo-toolbox/flake`; fetching flake metadata may require network access. The shell inherits the pinned upstream environment, including ROCm PyTorch, Transformers, model-download and evaluation libraries, rocprofiler, debuggers and compiler tools. An already-created container retains its old `/opt/gufo-shell`; use the host `develop.sh` helper above to use the corrected environment in that container.
+
+The three benchmark baselines remain separate optional packages, as upstream specifies. For example, inside the container using the updated shared checkout:
+
+```bash
+nix shell "path:$HOME/VMl/gufo-nix-mateBarey-github/toolboxes/gufo-nix#llama-cpp-reference"
+```
+
+Replace the package suffix with `ds4-reference` or `llama-cpp-mtp-reference` for the other baselines. Selecting one can acquire additional dependencies. Nix supplies the pinned build and development environments; it does not automatically benchmark a GGUF and choose the fastest settings.
 
 The image retains the matching interactive Bash and pins its system flake registry to the included Nixpkgs source. This prevents entering the prebuilt profile from pulling a moving Nixpkgs channel to obtain a different shell. The CPU image smoke checks this profile with networking disabled.
 
@@ -128,7 +160,7 @@ Use the main model unchanged:
 /home/esckobear/VMl/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
 ```
 
-The separate F16 projector needs numerical conversion for this pinned Gufo vision implementation. F16 and BF16 are different number formats despite both using 16 bits. Gufo's vision loader requires BF16 matrix tensors and F32 auxiliary tensors; it does not automatically cast an F16 `--mmproj` file. Renaming the file does not change the tensor data or types.
+Inspect the projector's tensor types rather than inferring them from `f16` in its filename. F16 and BF16 are different number formats despite both using 16 bits. Gufo's pinned vision loader requires BF16 matrix tensors and F32 auxiliary tensors; it does not automatically cast F16 matrices. A projector that already contains the required BF16/F32 tensors needs validation only. The reported local conversion result, `0 F16 matrices`, `110 BF16` and `224 F32` tensors, means that particular input was already in the required numeric formats.
 
 Run the installed converter, whose arguments are positional:
 
@@ -142,7 +174,7 @@ toolbox run -c gufo-rocm-nix gufo-convert-projector \
   --check-only
 ```
 
-The converter validates the exact Qwen3.8-27B vision layout: 334 tensor names/shapes, 5120 output width, BF16 matrix roles, and F32 auxiliary roles. It numerically rounds F16 matrices to BF16, preserves the F32 tensors byte for byte, verifies the completed output, and refuses to overwrite an existing destination. The original projector and Q4 model remain unchanged. Conversion cannot recover precision already lost when an original model was stored as F16.
+The converter validates the exact Qwen3.8-27B vision layout: 334 tensor names/shapes, 5120 output width, BF16 matrix roles, and F32 auxiliary roles. It numerically rounds any F16 matrices to BF16, preserves existing BF16 data and the F32 tensors, verifies the completed output, and refuses to overwrite an existing destination. If the validated BF16 output already exists, use only the second, `--check-only` command above. The original projector and Q4 model remain unchanged. Conversion cannot recover precision already lost when an original model was stored as F16.
 
 This is a converter for the supported 27B projector contract, not a general GGUF compatibility tool. It rejects a different vision architecture, tensor layout, or projection width. In particular, do not substitute the Flash Next projector or its MTP sidecar for the dense 27B model. A successful file check must still be followed by a real image request on the GPU.
 
@@ -171,7 +203,7 @@ The launcher defaults to:
 | Server log | `/tmp/gufo-qwen27b-server.log` on the host |
 | Hermes project directory | `/home/esckobear/Downloads/Downloads_raw/micro_never_ends/Kimi_Agent_Quaternion Sphere 16 Centroids` |
 
-The 256K context is a requested configuration, not a measured memory-capacity guarantee. It affects allocation and startup; the 4 GiB RAM prompt-cache budget is a separate setting. The server binds all interfaces as requested, so host network/firewall policy determines which other machines can reach it.
+The actual number of context tokens changes with the request. In the pinned dense Qwen implementation, the configured maximum also determines an eager KV reservation and the startup resource check. The default remains `262144`. That implementation's allocation policy and the current HIP memory budget are distinct from the machine's physical RAM total or its measured throughput. The 4 GiB RAM prompt-cache budget is a separate setting. The server binds all interfaces as requested, so host network/firewall policy determines which other machines can reach it.
 
 The launcher verifies that `/v1/models` advertises the expected alias before opening Hermes. It configures the custom endpoint and top-level `model_overrides.custom.qwen38-27b-uncensored` entries for tool support, vision support, and context. These declarations let Hermes use the endpoint; they do not independently verify model behavior. A different model already on the port is an error, and the launcher does not kill it.
 
@@ -185,6 +217,8 @@ GUFO_VISION_PATH="$HOME/models/mmproj-Qwen3.8-27B-Uncensored-BF16.gguf" \
 ```
 
 Run `bash scripts/gufo-nix/launch-hermes-qwen27b.sh --help` for the remaining overrides. When an existing server advertises the same alias, the launcher reuses it; it does not establish that all its paths, flags, or environment match the new request. To change context, model files, or a tuning cache, stop the specific existing server yourself before relaunching. The launcher waits up to 300 seconds by default and shows a log tail on failure. After a timeout, inspect the log and process before starting another copy; it might still be loading.
+
+Newly generated saved launchers also honor caller-provided `GUFO_CONTEXT`, `GUFO_CACHE_RAM_BYTES`, `GUFO_STARTUP_TIMEOUT` and `GUFO_TUNE_CACHE`, applying saved defaults only when a variable is unset. Older saved launchers keep their original assignments. Use the repository launcher directly to supply overrides without rerunning setup, for example `GUFO_PORT=8081 bash scripts/gufo-nix/launch-hermes-qwen27b.sh` for the previously selected port.
 
 Dense Qwen3.8-27B runs here with `--speculative off`. The Flash Next `--speculative mtp` setup is for another architecture and is not part of this launcher.
 
@@ -253,7 +287,7 @@ The earlier standalone installer's image recipe had two defects that are correct
 - Fedora 44 removed the compatibility CA path. All builder, runtime and Nix daemon certificate settings now use `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`, the bundle named by the [Fedora change documentation](https://fedoraproject.org/wiki/Changes/droppingOfCertPemFile). The recipe checks that this bundle exists and is nonempty before network use.
 - Podman's OCI image format ignored the recipe's Docker `SHELL` instruction. Every multi-command build step now invokes a copied script with `/bin/bash -euo pipefail`, so a failed Nix build stops the image build instead of continuing into garbage collection or producing Gufo symlinks with missing targets. Keeping these commands in ordinary scripts also supports older Podman versions that cannot parse Dockerfile heredocs.
 
-The repository includes regression checks for the certificate settings and executes safe failure probes through all three actual build-script commands. CI additionally builds the real Fedora/Nix bootstrap in Podman OCI format. A successfully built bootstrap is not a full Gufo image or GPU inference result.
+The repository includes regression checks for the certificate settings and executes safe failure probes through all three actual build-script commands. It also exercises Bash-output retention and failure propagation, rejected offline shell fallbacks, saved launcher overrides, and the existing-container development helper. CI additionally builds the real Fedora/Nix bootstrap in Podman OCI format and checks the flake/shell behavior with actual Nix. A successfully built bootstrap is not a full Gufo image or GPU inference result.
 
 Repository CPU tests can be run without a GPU:
 

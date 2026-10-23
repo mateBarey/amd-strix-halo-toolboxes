@@ -138,11 +138,11 @@ save_launcher() {
         printf 'export GUFO_VISION_PATH=%q\n' "$BF16"
         printf 'export GUFO_PROJECT_ROOT=%q\n' "$PROJECT"
         printf 'export GUFO_PORT=%q\n' "$PORT"
-        printf 'export GUFO_CONTEXT=%q\n' "$CONTEXT"
+        printf 'if [[ ! -v GUFO_CONTEXT ]]; then GUFO_CONTEXT=%q; fi\nexport GUFO_CONTEXT\n' "$CONTEXT"
         printf 'export GUFO_LOG_FILE=%q\n' "$SETUP_DIR/server.log"
-        printf 'export GUFO_STARTUP_TIMEOUT=%q\n' "${GUFO_STARTUP_TIMEOUT:-300}"
-        printf 'export GUFO_CACHE_RAM_BYTES=%q\n' "${GUFO_CACHE_RAM_BYTES:-4294967296}"
-        printf 'export GUFO_TUNE_CACHE=%q\n' ''
+        printf 'if [[ ! -v GUFO_STARTUP_TIMEOUT ]]; then GUFO_STARTUP_TIMEOUT=%q; fi\nexport GUFO_STARTUP_TIMEOUT\n' "${GUFO_STARTUP_TIMEOUT:-300}"
+        printf 'if [[ ! -v GUFO_CACHE_RAM_BYTES ]]; then GUFO_CACHE_RAM_BYTES=%q; fi\nexport GUFO_CACHE_RAM_BYTES\n' "${GUFO_CACHE_RAM_BYTES:-4294967296}"
+        printf 'if [[ ! -v GUFO_TUNE_CACHE ]]; then GUFO_TUNE_CACHE=%q; fi\nexport GUFO_TUNE_CACHE\n' ''
         printf 'exec bash %q\n' "$REPO/scripts/gufo-nix/launch-hermes-qwen27b.sh"
     } > "$temporary_launcher"
     chmod 755 "$temporary_launcher"

@@ -110,6 +110,38 @@ in_toolbox python3 -c 'import os; print("LD_LIBRARY_PATH" in os.environ, "LD_PRE
                             ('GUFO_PROJECT_ROOT', 'PROJECT')]:
             self.assertEqual(got[envkey], values[key])
         self.assertEqual(got['GUFO_TUNE_CACHE'], '')
+        defaults = {
+            'GUFO_CONTEXT': '262144',
+            'GUFO_CACHE_RAM_BYTES': '4294967296',
+            'GUFO_STARTUP_TIMEOUT': '300',
+            'GUFO_TUNE_CACHE': '',
+        }
+        for key, value in defaults.items():
+            self.assertEqual(got[key], value)
+
+        # Exercise the generated executable, rather than matching its shell text.
+        # Launch-time choices must survive while the saved deployment stays fixed.
+        overrides = {
+            'GUFO_CONTEXT': '524288',
+            'GUFO_CACHE_RAM_BYTES': '8589934592',
+            'GUFO_STARTUP_TIMEOUT': '900',
+            'GUFO_TUNE_CACHE': str(work / 'cache $(false) `false` $HOME "quoted"'),
+        }
+        for choices in (overrides, {key: '' for key in defaults}):
+            launch_env = self.env.copy()
+            launch_env.update(choices)
+            launch_env.update(GUFO_TOOLBOX_NAME='must-not-replace-saved-container',
+                              GUFO_PORT='9999', GUFO_MODEL_PATH='/wrong/model',
+                              GUFO_VISION_PATH='/wrong/projector', GUFO_PROJECT_ROOT='/wrong/project')
+            result = subprocess.run(['bash', values['LAUNCHER']], env=launch_env,
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            overridden = json.loads(captured.read_text())
+            for key, value in choices.items():
+                self.assertEqual(overridden[key], value)
+            for key in ('GUFO_TOOLBOX_NAME', 'GUFO_PORT', 'GUFO_MODEL_PATH',
+                        'GUFO_VISION_PATH', 'GUFO_PROJECT_ROOT'):
+                self.assertEqual(overridden[key], got[key])
 
     def test_prior_marker_migrates_under_lock_without_touching_old_repo(self):
         work = self.root / 'setup'

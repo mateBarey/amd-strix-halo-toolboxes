@@ -95,9 +95,11 @@ Add `--log-progress` to show prefill, decode, speed, and speculative-acceptance 
 
 ### Gufo Nix toolbox
 
-The additive fork image [`toolboxes/Dockerfile.gufo-nix`](toolboxes/Dockerfile.gufo-nix) builds pinned Gufo with its matching Nix ROCm 7.2.3 stack and developer tools. It includes a validated Qwen3.8-27B F16-to-BF16 projector converter, a host Hermes launcher, live text/image baseline profiling, and the optional synthetic BF16 hipBLASLt tuner. Use a separate `gufo-rocm-nix` container to preserve the existing ROCm 10.0 setup. GPU performance and tuning gains must be measured on the target machine.
+The additive fork image [`toolboxes/Dockerfile.gufo-nix`](toolboxes/Dockerfile.gufo-nix) builds pinned Gufo with its matching Nix ROCm 7.2.3 stack and inherits Gufo's full official Nix development environment for profiling, model downloads and reference evaluation. It includes a validated Qwen3.8-27B projector checker/converter, a host Hermes launcher, live text/image baseline profiling, and the optional synthetic BF16 hipBLASLt tuner. Use a separate `gufo-rocm-nix` container to preserve the existing ROCm 10.0 setup. GPU performance and tuning gains must be measured on the target machine.
 
 See the [Gufo Nix guide](docs/gufo-nix.md) for local builds, fork-owned GHCR publication, model/projector setup, profiling, optional tuning, and rollback.
+
+If `gufo-rocm-nix` is already built and installed, enter the corrected official development environment from the host with `bash scripts/gufo-nix/develop.sh`. This reuses that container and checks that its installed Gufo matches the checkout before acquiring missing development dependencies. Use this route to repair the earlier minimal shell; the complete setup below builds an image and creates a container.
 
 From a checkout of this fork's `gufo-nix` branch, run the complete Qwen3.8-27B setup on the Fedora host:
 

@@ -79,7 +79,26 @@ user_nix() {
         /usr/local/bin/nix --extra-experimental-features nix-command --store daemon "$@"
 }
 user_nix store ping
-shell_version=$(user_nix develop --offline /opt/gufo-shell --command gufo --version)
+# Nix develop catches interactive-Bash realization errors and may still exit0
+# by using a fallback Bash. Check its separately selected Bash first using a
+# command that propagates the failure; prohibit both builds and substitution.
+offline_shell_options=(--offline --max-jobs 0 --option substitute false)
+user_nix build "${offline_shell_options[@]}" --no-link nixpkgs#bashInteractive
+shell_log=$(mktemp)
+if ! shell_version=$(user_nix develop "${offline_shell_options[@]}" \
+    /opt/gufo-shell --command gufo --version 2>"$shell_log"); then
+    cat "$shell_log" >&2
+    rm -f "$shell_log"
+    exit 1
+fi
+if grep -Eq 'error \(ignored\)|derivations? will be built|building .*/nix/store/' "$shell_log"; then
+    printf 'Offline developer shell attempted a build or used an error fallback:\n' >&2
+    cat "$shell_log" >&2
+    rm -f "$shell_log"
+    exit 1
+fi
+cat "$shell_log" >&2
+rm -f "$shell_log"
 [[ "$shell_version" == "$version" ]]
 expression='let
   builder = builtins.storePath (builtins.getEnv "GUFO_SMOKE_BASH");
