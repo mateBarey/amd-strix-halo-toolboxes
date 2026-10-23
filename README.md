@@ -29,6 +29,7 @@ This is a hobby project maintained in my spare time. If you find these toolboxes
 ## Table of Contents
 
 - [Supported Toolboxes](#supported-toolboxes)
+- [Gufo Nix toolbox](#gufo-nix-toolbox)
 - [Temporary llama.cpp ROCm inference workaround](#temporary-llamacpp-rocm-inference-workaround)
 - [Manual container setup](#manual-container-setup)
 - [Legacy Benchmark Archive](#legacy-benchmark-archive)
@@ -91,6 +92,20 @@ podman run --rm -it --name gufo-server \
 ```
 
 Add `--log-progress` to show prefill, decode, speed, and speculative-acceptance progress in the server output. Point `--model` at the first shard; Gufo loads the remaining numbered shards. Add `--speculative mtp --mtp-model /models/MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf` for the tested Flash Next MTP path. DeepSeek uses its own `--dspark-model` sidecar flag. Keep these auxiliary GGUFs separate from the target weights.
+
+### Gufo Nix toolbox
+
+The additive fork image [`toolboxes/Dockerfile.gufo-nix`](toolboxes/Dockerfile.gufo-nix) builds pinned Gufo with its matching Nix ROCm 7.2.3 stack and developer tools. It includes a validated Qwen3.8-27B F16-to-BF16 projector converter, a host Hermes launcher, live text/image baseline profiling, and the optional synthetic BF16 hipBLASLt tuner. Use a separate `gufo-rocm-nix` container to preserve the existing ROCm 10.0 setup. GPU performance and tuning gains must be measured on the target machine.
+
+See the [Gufo Nix guide](docs/gufo-nix.md) for local builds, fork-owned GHCR publication, model/projector setup, profiling, optional tuning, and rollback.
+
+From a checkout of this fork's `gufo-nix` branch, run the complete Qwen3.8-27B setup on the Fedora host:
+
+```bash
+bash scripts/gufo-nix/setup-qwen27b.sh
+```
+
+This builds and checks the image, creates a new Toolbx, prepares the matching projector, and opens Hermes. It also saves a launcher for subsequent use. The Fedora 44 certificate path and Podman OCI build-shell fixes are included in the source.
 
 > [!IMPORTANT]
 > `rocm-10.0-engramhalo` is the exception to the usual Strix Halo `--load-mode none`

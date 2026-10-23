@@ -1,0 +1,4 @@
+#!/bin/bash
+set -euo pipefail
+exec /opt/gufo-tools/venv/bin/python3 -I \
+    /opt/gufo-toolbox/convert_gufo_projector.py "$@"

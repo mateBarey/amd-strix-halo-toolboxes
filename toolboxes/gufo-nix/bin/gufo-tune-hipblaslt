@@ -1,0 +1,91 @@
+#!/usr/bin/python3
+"""Run the matching upstream synthetic BF16 GEMM tuner in a fresh directory."""
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import shutil
+import shlex
+import subprocess
+import sys
+import tempfile
+
+
+def positive(value):
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError('must be positive')
+    return number
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Optional synthetic BF16 hipBLASLt GEMM tuning, not Q4 kernel or vision tuning. Stop inference first for meaningful timings; this tool never kills processes. Current Gufo vision ignores the resulting cache environment variable.')
+    parser.add_argument('--outdir', type=Path, default=Path.home() / '.cache/gufo/hipblaslt', help='Parent directory; every invocation creates a unique child')
+    parser.add_argument('--batch', help='Comma-separated prompt batch sizes')
+    parser.add_argument('--shape', action='append', default=[], help='Output-by-input MxK; repeatable. First custom shape replaces upstream defaults.')
+    parser.add_argument('--warmup', type=positive)
+    parser.add_argument('--repetitions', type=positive)
+    parser.add_argument('--max-algorithms', type=positive)
+    parser.add_argument('--workspace-mib', type=positive)
+    parser.add_argument('--quick', action='store_true', help='Upstream quick mode: batch128 FFN gate/up only, applied before custom shape/batch overrides')
+    args = parser.parse_args()
+    work = None
+    try:
+        prefix = Path(os.environ.get('GUFO_TOOLS_PREFIX', '/opt/gufo'))
+        tuner = prefix / 'bin/tune_hipblaslt'
+        gufo = prefix / 'bin/gufo'
+        version = subprocess.run([str(gufo), '--version'], check=True, capture_output=True, text=True).stdout.strip()
+        probe = subprocess.run([str(gufo), 'diagnose', '--fingerprint', '--json'], check=True, capture_output=True, text=True)
+        fingerprint = json.loads(probe.stdout)
+        args.outdir.mkdir(parents=True, exist_ok=True)
+        work = Path(tempfile.mkdtemp(prefix='.pending-', dir=args.outdir))
+        cache = work / 'plans.bin'
+        command = [str(tuner), '--out', str(cache)]
+        if args.quick:
+            command.append('--quick')
+        for shape in args.shape:
+            command.extend(['--shape', shape])
+        for option in ('batch', 'warmup', 'repetitions', 'max_algorithms', 'workspace_mib'):
+            value = getattr(args, option)
+            if value is not None:
+                command.extend(['--' + option.replace('_', '-'), str(value)])
+        print('Running synthetic BF16 tuner; stop other GPU work for meaningful results.', flush=True)
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode:
+            if result.stdout:
+                print(result.stdout, file=sys.stderr, end='')
+            if result.stderr:
+                print(result.stderr, file=sys.stderr, end='')
+            raise RuntimeError(f'tuner exited with status {result.returncode}; partial plans discarded')
+        if not cache.is_file() or cache.stat().st_size == 0:
+            raise RuntimeError('tuner returned success without a nonempty plan database')
+        (work / 'tuner.log').write_text(result.stdout + result.stderr)
+        report = {'schema': 'gufo-toolbox-hipblaslt.v1',
+            'created_at': datetime.now(timezone.utc).isoformat(), 'engine_version': version,
+            'probe': fingerprint, 'command': command, 'plan_file': 'plans.bin',
+            'scope': 'Synthetic BF16 GEMM shapes; not GGUF conversion, Q4 kernel tuning or vision tuning.',
+            'cache_environment': 'GUFO_HIPBLASLT_PLAN_CACHE',
+            'limitations': ['Current Gufo vision ignores the cache environment variable.',
+                'Only runtime routes using hipBLASLt can benefit. No model workload speedup is promised.']}
+        (work / 'runtime.json').write_text(json.dumps(report, indent=2) + '\n')
+        final = args.outdir / ('run-' + work.name.removeprefix('.pending-'))
+        if final.exists():
+            raise RuntimeError('result directory collision; refusing to replace it')
+        work.rename(final)
+        work = None
+        print(f'Plans: {final / "plans.bin"}')
+        print(f'Runtime metadata: {final / "runtime.json"}')
+        print(f'Tuner measurements: {final / "tuner.log"}')
+        print('Runtime setting: GUFO_HIPBLASLT_PLAN_CACHE=' + shlex.quote(str(final / 'plans.bin')))
+        return 0
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+        print(f'gufo-tune-hipblaslt: {error}', file=sys.stderr)
+        return 1
+    finally:
+        if work is not None:
+            shutil.rmtree(work)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
