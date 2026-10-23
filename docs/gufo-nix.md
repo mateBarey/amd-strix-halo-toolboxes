@@ -55,6 +55,37 @@ bash scripts/gufo-nix/develop.sh --command python -c \
 
 Inside the environment, `GUFO_SOURCE_ROOT` points to the exact pinned Gufo source, including its profiling and reference scripts. The inherited ROCr library paths, `TORCH_HOME`, compiler inputs and ccache hook are preserved. This repairs the development environment; a model startup error remains a separate runtime issue.
 
+## Start and check the model in the existing container
+
+Opening the development shell does not start an inference server. From the `gufo-nix-mateBarey-github` checkout, including the Toolbx/Nix prompt, run:
+
+```bash
+bash scripts/gufo-nix/run-qwen27b.sh --replace-flash-next
+```
+
+This command performs the actual model switch and startup. The explicit `--replace-flash-next` option selects only a Gufo server owned by your user and running the original model at `/home/esckobear/VMl/Qwen3.8-Flash-Next-Uncensored-Gufo-Q4Mix.gguf`. It validates the new files and port first, checks the old process's executable, model argument and process identity, then requests a graceful exit using a Linux pidfd. An unrelated model or a process merely occupying port 8080 is not selected. No matching old server means nothing is stopped. Omit the flag to keep all current inference processes running.
+
+The helper then loads `Qwen3.8-27B-Uncensored-Q4_K_M.gguf` with the validated `mmproj-Qwen3.8-27B-Uncensored-BF16.gguf` projector, using one session, context `262144`, port `8081`, and speculation/thinking disabled. It uses the installed Nix-built Gufo directly inside Toolbx. Running the same command on the host routes execution into the existing `gufo-rocm-nix` container.
+
+Before reporting success it sends one real text request and one image request, requiring completed response streams and generated tokens. The default image is a small solid-red PNG generated locally; `GUFO_TEST_IMAGE=/path/to/image.png` supplies your own PNG/JPEG. These checks establish short text/image execution, not full-context performance or a quality benchmark. A matching model already serving on port 8081 is reused and checked; reuse establishes its API identity and responses, not all its original launch flags.
+
+The server stays running after successful checks. Start Hermes from a host terminal:
+
+```bash
+GUFO_TOOLBOX_NAME=gufo-rocm-nix GUFO_PORT=8081 GUFO_CONTEXT=262144 \
+  bash "$HOME/VMl/gufo-nix-mateBarey-github/scripts/gufo-nix/launch-hermes-qwen27b.sh"
+```
+
+Each start/check has a unique directory under `$HOME/.cache/gufo/qwen27b/`, printed before startup. It retains the exact command, server log, runtime inventory, memory snapshots and inference-check result. Startup or inference failure returns a nonzero status, displays the server log and current memory/process evidence, and does not configure Hermes. The launcher does not alter the context or bypass Gufo's admission check to hide a failed start.
+
+The memory inspection uses the exact CLR and patched ROCr selected by the installed Nix package, verified against the checkout. It records HIP free/total, host available memory, current-user Gufo identities, readable KFD allocation counters, relevant environment values and the existing active kernel settings. Run it separately at any time:
+
+```bash
+bash scripts/gufo-nix/inspect-memory.sh
+```
+
+These figures distinguish a currently occupied allocation budget from configured driver limits and total physical RAM. Stopping a specifically identified previous model releases that model's allocations; it is not evidence that every startup failure has the same cause. If startup still fails, the retained current snapshots and exact server error are the evidence needed for the next runtime correction.
+
 ## Route A: build locally
 
 ### Complete setup from this fork
@@ -311,6 +342,7 @@ These cover projector validation/conversion, launcher control flow, actual loopb
 | No device / permission error | Check `/dev/kfd`, `/dev/dri`, host driver health, and container device/group access. |
 | Wrong libraries or `/opt/rocm` errors | Use the installed wrapped executable. Remove manually injected `LD_LIBRARY_PATH`/`LD_PRELOAD`; do not source a different ROCm stack. |
 | Startup timeout | Read `/tmp/gufo-qwen27b-server.log` and check whether the process is still loading before retrying. |
+| `request-state claim exceeds state capacity` | Use `run-qwen27b.sh` to retain current matching-runtime HIP/host memory and process evidence. If replacing the original Flash Next model, its explicit `--replace-flash-next` option stops only that verified model. Keep the current kernel configuration; the error alone does not establish a physical RAM ceiling. |
 | Tuner cache made no measurable difference | Only eligible hipBLASLt routes consume it; Q4 and vision paths are outside its scope. Retain Gufo defaults if the actual workload does not improve. |
 
 ## Updating and rollback

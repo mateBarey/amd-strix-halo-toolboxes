@@ -101,6 +101,8 @@ See the [Gufo Nix guide](docs/gufo-nix.md) for local builds, fork-owned GHCR pub
 
 If `gufo-rocm-nix` is already built and installed, enter the corrected official development environment from the host with `bash scripts/gufo-nix/develop.sh`. This reuses that container and checks that its installed Gufo matches the checkout before acquiring missing development dependencies. Use this route to repair the earlier minimal shell; the complete setup below builds an image and creates a container.
 
+To start the model in the existing container, run `bash scripts/gufo-nix/run-qwen27b.sh` from the host or from inside the Nix Toolbx shell. It starts the 27B server on port 8081 at context 262144 and requires actual text and image completions before reporting success. Add `--replace-flash-next` to gracefully stop only your verified Gufo process for the original Flash Next model before loading 27B. The helper retains matching-runtime memory snapshots and the server log for any failed start. See [starting and checking the existing model setup](docs/gufo-nix.md#start-and-check-the-model-in-the-existing-container).
+
 From a checkout of this fork's `gufo-nix` branch, run the complete Qwen3.8-27B setup on the Fedora host:
 
 ```bash
