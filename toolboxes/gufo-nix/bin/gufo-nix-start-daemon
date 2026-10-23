@@ -1,0 +1,65 @@
+#!/bin/bash
+# Root-owned sudo target. Only starts the fixed container Nix daemon.
+set -eo pipefail
+
+if (( $# != 0 )); then
+    printf 'gufo-nix-start-daemon: no arguments are accepted\n' >&2
+    exit 2
+fi
+if (( EUID != 0 )); then
+    printf 'gufo-nix-start-daemon: must run as container root\n' >&2
+    exit 1
+fi
+
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+unset LD_PRELOAD LD_LIBRARY_PATH NIX_CONFIG NIX_USER_CONF_FILES NIX_CONF_DIR NIX_REMOTE BASH_ENV ENV CDPATH
+umask 077
+
+NIX_REAL=/opt/nix/bin/nix
+NIX_DAEMON=/opt/nix/bin/nix-daemon
+RUNTIME_DIR=/run/gufo-nix
+
+/usr/bin/install -d -o root -g root -m 0755 "$RUNTIME_DIR"
+exec 9>"$RUNTIME_DIR/lock"
+/usr/bin/flock -w 15 9 || {
+    printf 'gufo-nix-start-daemon: timed out waiting for startup lock\n' >&2
+    exit 1
+}
+
+# These settings are constructed here, never copied from the calling user.
+CLEAN_ENV=(/usr/bin/env -i HOME=/var/empty USER=root LOGNAME=root
+    PATH=/usr/sbin:/usr/bin:/sbin:/bin NIX_CONF_DIR=/etc/nix
+    NIX_USER_CONF_FILES=/dev/null
+    NIX_SSL_CERT_FILE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem)
+
+daemon_ready() {
+    /usr/bin/timeout 1 "${CLEAN_ENV[@]}" "$NIX_REAL" store ping --store daemon \
+        >/dev/null 2>&1
+}
+
+if daemon_ready; then
+    exit 0
+fi
+
+# Rotate on a new startup attempt, not on every client command. This bounds
+# retained startup logs without truncating the log of a live daemon.
+if [[ -f "$RUNTIME_DIR/daemon.log" ]]; then
+    /usr/bin/mv -f "$RUNTIME_DIR/daemon.log" "$RUNTIME_DIR/daemon.previous.log"
+fi
+/usr/bin/nohup "${CLEAN_ENV[@]}" "$NIX_DAEMON" --daemon \
+    >>"$RUNTIME_DIR/daemon.log" 2>&1 </dev/null 9>&- &
+daemon_pid=$!
+deadline=$((SECONDS + 10))
+while (( SECONDS < deadline )); do
+    if daemon_ready; then
+        exit 0
+    fi
+    if ! kill -0 "$daemon_pid" 2>/dev/null; then
+        break
+    fi
+    /usr/bin/sleep 0.1
+done
+
+printf 'gufo-nix-start-daemon: daemon did not become ready; /run/gufo-nix/daemon.log:\n' >&2
+/usr/bin/tail -n 20 "$RUNTIME_DIR/daemon.log" >&2 || true
+exit 1

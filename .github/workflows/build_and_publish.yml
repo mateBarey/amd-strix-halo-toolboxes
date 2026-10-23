@@ -29,6 +29,7 @@ env:
 jobs:
   # 1) Prepare a clean JSON array for the matrix
   prepare:
+    if: github.repository == 'kyuz0/amd-strix-halo-toolboxes'
     runs-on: ubuntu-latest
     outputs:
       matrix_json: ${{ steps.mk.outputs.matrix_json }}
@@ -52,6 +53,7 @@ jobs:
 
   # 2) Build each backend in parallel using the prepared matrix
   build-and-push:
+    if: github.repository == 'kyuz0/amd-strix-halo-toolboxes'
     needs: prepare
     runs-on: ubuntu-latest
     concurrency:
@@ -138,7 +140,7 @@ jobs:
   # built, smoke-tested, and pushed successfully.
   record-source-state:
     needs: build-and-push
-    if: ${{ needs.build-and-push.result == 'success' && inputs.source_state_name != '' && inputs.source_state_value != '' }}
+    if: ${{ github.repository == 'kyuz0/amd-strix-halo-toolboxes' && needs.build-and-push.result == 'success' && inputs.source_state_name != '' && inputs.source_state_value != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Save successful upstream revision

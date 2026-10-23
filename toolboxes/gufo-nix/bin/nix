@@ -1,0 +1,23 @@
+#!/bin/bash
+# Use the container-owned Nix installation; never install a shared-home profile.
+set -eo pipefail
+
+NIX_REAL=/opt/nix/bin/nix
+NIX_DAEMON_HELPER=/usr/local/sbin/gufo-nix-start-daemon
+
+# Information commands need no store connection or privileged startup.
+case "${1:-}" in
+    --version|--help|-h)
+        exec "$NIX_REAL" "$@"
+        ;;
+esac
+
+if (( EUID == 0 )); then
+    export NIX_REMOTE=local
+else
+    # sudo's env_reset and the root-owned, argument-free helper keep privileged
+    # startup independent of this user's Nix configuration and executable PATH.
+    /usr/bin/sudo -n -- "$NIX_DAEMON_HELPER"
+    export NIX_REMOTE=daemon
+fi
+exec "$NIX_REAL" "$@"

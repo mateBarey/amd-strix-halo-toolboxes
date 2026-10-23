@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   poll-and-trigger:
+    if: github.repository == 'kyuz0/amd-strix-halo-toolboxes'
     runs-on: ubuntu-latest
     steps:
       - name: Install registry inspector

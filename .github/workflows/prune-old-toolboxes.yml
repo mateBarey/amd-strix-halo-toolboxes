@@ -16,6 +16,7 @@ on:
 
 jobs:
   prune:
+    if: github.repository == 'kyuz0/amd-strix-halo-toolboxes'
     runs-on: ubuntu-latest
     env:
       NS: kyuz0

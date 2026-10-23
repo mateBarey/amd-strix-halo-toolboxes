@@ -1,0 +1,60 @@
+# syntax=docker/dockerfile:1
+# Build context: the repository root. This is an additive, Nix-owned ROCm
+# image; do not layer it onto the ROCm 10 RPM image.
+FROM registry.fedoraproject.org/fedora:44 AS builder
+
+ARG NIX_VERSION=2.34.9
+ARG NIX_SHA256=e8912e087582b3799e0e5a6b06f9d63386c54821f77ad4de3b9b748736ad364e
+ARG NIX_BUILD_CORES=4
+ARG NIX_MAX_JOBS=1
+
+RUN dnf -y --nodocs --setopt=install_weak_deps=False install \
+      bash ca-certificates coreutils curl git-core tar xz \
+    && dnf clean all && rm -rf /var/cache/dnf/*
+
+COPY toolboxes/gufo-nix/build/ /opt/gufo-toolbox/build/
+
+# Import the official, checksum-verified Nix binary distribution. No installer
+# runs, and no /home, /root profile, systemd unit or host configuration is used.
+# An explicit Bash command also works with Podman's default OCI image format,
+# which does not preserve Docker's SHELL setting. Plain script files also
+# support older Podman/Buildah versions without Dockerfile RUN heredocs.
+RUN /bin/bash -euo pipefail /opt/gufo-toolbox/build/bootstrap-nix.sh
+
+# Fedora 44 removed the old /etc/pki/tls/certs/ca-bundle.crt compatibility link.
+ENV NIX_SSL_CERT_FILE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+COPY toolboxes/gufo-nix/flake.nix toolboxes/gufo-nix/flake.lock \
+     toolboxes/gufo-nix/gufo-revision /opt/gufo-toolbox/flake/
+
+# The locked upstream package supplies HIP, hipBLASLt and patched ROCr from
+# one ROCm version. Both tuning tools are built from the same Gufo source.
+RUN /bin/bash -euo pipefail /opt/gufo-toolbox/build/build-gufo.sh
+
+FROM registry.fedoraproject.org/fedora-toolbox:44
+LABEL com.github.containers.toolbox="true" \
+      org.opencontainers.image.title="Gufo with Nix and matching ROCm tuning tools" \
+      io.gufo.revision="7c8196527ad02ac4c585a32b1131fab7e70509d0" \
+      io.gufo.rocm-version="7.2.3" \
+      io.gufo.nix-version="2.34.9"
+
+RUN dnf -y --nodocs --setopt=install_weak_deps=False install \
+      bash ca-certificates coreutils curl flatpak-spawn git-core \
+      procps-ng python3 python3-pip shadow-utils sudo tar util-linux xz \
+    && dnf clean all && rm -rf /var/cache/dnf/*
+
+COPY --from=builder /nix/ /nix/
+COPY --from=builder /opt/ /opt/
+COPY --from=builder /etc/nix/registry.json /etc/nix/registry.json
+COPY toolboxes/gufo-nix/nix.conf /etc/nix/nix.conf
+COPY toolboxes/gufo-nix/convert_gufo_projector.py \
+     toolboxes/gufo-nix/gufo_profile.py /opt/gufo-toolbox/
+COPY toolboxes/gufo-nix/bin/ /tmp/gufo-bin/
+
+RUN /bin/bash -euo pipefail /opt/gufo-toolbox/build/setup-runtime.sh
+
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    NIX_SSL_CERT_FILE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \
+    PYTHONNOUSERSITE=1
+# Toolbx supplies init-container as the entrypoint. No daemon is started at
+# image-build time; normal-user `nix` starts it on demand inside the container.
+CMD ["/bin/bash"]
