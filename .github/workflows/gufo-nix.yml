@@ -3,6 +3,7 @@ name: Gufo Nix toolbox
 on:
   pull_request:
     paths:
+      - 'run_qwen_ablit.sh'
       - '.github/workflows/gufo-nix.yml'
       - 'toolboxes/Dockerfile.gufo-nix'
       - 'toolboxes/gufo-nix/**'
@@ -10,6 +11,7 @@ on:
       - 'tests/gufo_nix/**'
   push:
     paths:
+      - 'run_qwen_ablit.sh'
       - '.github/workflows/gufo-nix.yml'
       - 'toolboxes/Dockerfile.gufo-nix'
       - 'toolboxes/gufo-nix/**'
@@ -50,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for path in scripts/gufo-nix/*.sh toolboxes/gufo-nix/bin/* toolboxes/gufo-nix/build/*.sh tests/gufo_nix/*.sh; do
+          for path in run_qwen_ablit.sh scripts/gufo-nix/*.sh toolboxes/gufo-nix/bin/* toolboxes/gufo-nix/build/*.sh tests/gufo_nix/*.sh; do
             [[ -f "$path" ]] || continue
             IFS= read -r first_line < "$path" || true
             case "$path:$first_line" in

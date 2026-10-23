@@ -99,7 +99,9 @@ The additive fork image [`toolboxes/Dockerfile.gufo-nix`](toolboxes/Dockerfile.g
 
 See the [Gufo Nix guide](docs/gufo-nix.md) for local builds, fork-owned GHCR publication, model/projector setup, profiling, optional tuning, and rollback.
 
-If `gufo-rocm-nix` is already built and installed, enter the corrected official development environment from the host with `bash scripts/gufo-nix/develop.sh`. This reuses that container and checks that its installed Gufo matches the checkout before acquiring missing development dependencies. Use this route to repair the earlier minimal shell; the complete setup below builds an image and creates a container.
+For an already-built `gufo-rocm-nix` container, [`run_qwen_ablit.sh`](run_qwen_ablit.sh) is the single daily launcher: run it on the host to start/check Qwen 27B and open Hermes. Use `./run_qwen_ablit.sh stop` to release the model and `./run_qwen_ablit.sh status` to show its verified PIDs and API state. Gufo stays running after Hermes exits until you stop it. See [installing it at the original filename](docs/gufo-nix.md#daily-use-with-run_qwen_ablitsh).
+
+To enter the corrected official development environment from the host, use `bash scripts/gufo-nix/develop.sh`. This reuses the existing container and checks that its installed Gufo matches the checkout before acquiring missing development dependencies. Use this route to repair the earlier minimal shell; the complete setup below builds an image and creates a container.
 
 To start the model in the existing container, run `bash scripts/gufo-nix/run-qwen27b.sh` from the host or from inside the Nix Toolbx shell. It starts the 27B server on port 8081 at context 262144 and requires actual text and image completions before reporting success. Add `--replace-flash-next` to gracefully stop only your verified Gufo process for the original Flash Next model before loading 27B. The helper retains matching-runtime memory snapshots and the server log for any failed start. See [starting and checking the existing model setup](docs/gufo-nix.md#start-and-check-the-model-in-the-existing-container).
 

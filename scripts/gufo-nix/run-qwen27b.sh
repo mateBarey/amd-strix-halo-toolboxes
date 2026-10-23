@@ -226,6 +226,8 @@ CHECK=(python3 "$REPO/scripts/gufo-nix/check-server.py" --base-url "$BASE_URL"
 "${CHECK[@]}" || failure
 snapshot_memory "$run_dir/memory-ready.json"
 printf 'Text and vision checks passed. Gufo is serving at %s\n' "$BASE_URL"
-printf 'Start Hermes from the HOST (exit Toolbx first if currently inside):\n'
-printf '  GUFO_TOOLBOX_NAME=%q GUFO_PORT=%q GUFO_CONTEXT=%q bash %q\n' \
-    "$TOOLBOX_NAME" "$PORT" "$CONTEXT" "$REPO/scripts/gufo-nix/launch-hermes-qwen27b.sh"
+if [[ "${GUFO_PRINT_HERMES_COMMAND:-1}" != 0 ]]; then
+    printf 'Start Hermes from the HOST (exit Toolbx first if currently inside):\n'
+    printf '  GUFO_TOOLBOX_NAME=%q GUFO_PORT=%q GUFO_CONTEXT=%q bash %q\n' \
+        "$TOOLBOX_NAME" "$PORT" "$CONTEXT" "$REPO/scripts/gufo-nix/launch-hermes-qwen27b.sh"
+fi

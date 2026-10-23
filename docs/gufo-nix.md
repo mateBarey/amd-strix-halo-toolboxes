@@ -28,6 +28,46 @@ Use a Linux Strix Halo host with working AMD GPU device access, Podman and Toolb
 
 For the Hermes launcher, `toolbox`, `curl`, `python3`, and `hermes` must be available **on the host**. Keep the model and projector under paths visible inside Toolbx; the examples use the shared home directory. Building the Nix/ROCm closure needs substantial disk space, network access, and time. A small GitHub-hosted runner may run out of disk or memory; local builds use the same recipe.
 
+## Daily use with run_qwen_ablit.sh
+
+For the already-installed model, use the root [`run_qwen_ablit.sh`](../run_qwen_ablit.sh) file. On the Fedora **host**, this one command starts or reuses the server, checks actual text and image completions, then opens Hermes in the configured project:
+
+```bash
+./run_qwen_ablit.sh
+```
+
+The defaults match the working setup: `gufo-rocm-nix`, port `8081`, context `262144`, the 27B Q4_K_M model and its validated BF16 projector. It preserves the existing environment-variable overrides. The script checks for host Hermes before starting Gufo and stops the launch sequence if either inference check fails. Hermes must connect to the existing checked server; an unavailable API during that handoff stops the script.
+
+To put this file at the original `$HOME/VMl/run_qwen_ablit.sh` path, update the checkout and install it with a backup of the previous file:
+
+```bash
+(
+  set -e
+  cd "$HOME/VMl/gufo-nix-mateBarey-github"
+  git fetch origin gufo-nix
+  git merge --ff-only FETCH_HEAD
+  target="$HOME/VMl/run_qwen_ablit.sh"
+  if [[ -e "$target" || -L "$target" ]]; then
+    backup="${target}.backup.$(date +%Y%m%d-%H%M%S).$$"
+    cp -a -- "$target" "$backup"
+    printf 'Previous launcher saved: %s\n' "$backup"
+  fi
+  install -m 0755 -- run_qwen_ablit.sh "$target"
+)
+```
+
+The installed file finds the existing `gufo-nix-mateBarey-github` checkout automatically. Set `GUFO_REPO` only when that checkout lives elsewhere. From `$HOME/VMl`:
+
+```bash
+./run_qwen_ablit.sh          # Start/check Gufo, then open Hermes on the host
+./run_qwen_ablit.sh status   # Show current verified Gufo PIDs and API state
+./run_qwen_ablit.sh stop     # Gracefully stop this exact model and print its PIDs
+```
+
+Gufo stays in the background after Hermes exits; the script prints the stop command before starting it. `stop` and `status` work both on the host and inside Toolbx, directly inspecting the real current-user Gufo process. They do not start a container or load a model. Stop uses the same exact-model, executable and pidfd checks as the existing replacement helper; a saved launcher PID is never used as a termination target. A running Toolbx shell can remain after the model stops.
+
+If the prompt starts with `⬢`, type `exit` to return to the Fedora host before starting Hermes. Invoking `start` inside a container exits with that instruction before any startup work. Status reports the currently advertised API model; successful text and image execution is checked by `start`.
+
 ## Repair the development environment in an existing container
 
 Use this route when the image and `gufo-rocm-nix` container already exist. Run on the host from the existing checkout:

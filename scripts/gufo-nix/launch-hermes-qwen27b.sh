@@ -24,9 +24,9 @@ Defaults:
   Context: 262144; speculation: off; thinking: off; port: 8080
   Served model ID: qwen38-27b-uncensored
 
-Convert the original F16 projector to the BF16 filename above before first use.
-The input model/projector files remain unchanged. This launcher does not tune
-Q4 or vision kernels and does not request a plan cache by default.
+Use the validated BF16 projector at the path above. The local f16-named source
+may already contain BF16 tensors; the filename does not determine its dtype.
+This launcher does not tune Q4 or vision kernels or request a cache by default.
 
 Overrides (environment variables):
   GUFO_TOOLBOX_NAME  GUFO_BIN           GUFO_PROJECT_ROOT
@@ -35,6 +35,8 @@ Overrides (environment variables):
   GUFO_LOG_FILE      GUFO_STARTUP_TIMEOUT (default 300 seconds)
   GUFO_TUNE_CACHE    Explicit opt-in path to a readable, nonempty plan cache.
                     An unavailable file is ignored; current vision ignores it.
+  GUFO_REQUIRE_RUNNING  Set to 1 to require an already-ready expected API.
+                        This mode never starts another Gufo server.
 HELP
 }
 
@@ -71,7 +73,7 @@ for program in toolbox curl python3 hermes; do
 done
 
 api_models() {
-    curl -fsS --connect-timeout 2 --max-time 5 "$BASE_URL/models" 2>/dev/null
+    curl --noproxy '*' -fsS --connect-timeout 2 --max-time 5 "$BASE_URL/models" 2>/dev/null
 }
 
 has_expected_model() {
@@ -100,6 +102,11 @@ if MODELS_JSON=$(api_models); then
     fi
     printf 'Reusing %s on port %s.\n' "$SERVED_NAME" "$PORT"
 else
+    if [[ "${GUFO_REQUIRE_RUNNING:-0}" == 1 ]]; then
+        printf 'Checked Gufo API is unavailable at %s; GUFO_REQUIRE_RUNNING=1 prevents another server launch.\n' \
+            "$BASE_URL" >&2
+        exit 1
+    fi
     # Validate against the installed image, with host dynamic-loader overrides removed.
     toolbox run -c "$TOOLBOX_NAME" env -u LD_LIBRARY_PATH -u LD_PRELOAD bash -c '
         test -x "$1" || { printf "Missing installed Gufo executable: %s\n" "$1" >&2; exit 1; }

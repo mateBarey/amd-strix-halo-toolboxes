@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stop only an explicitly selected, current-user Gufo model using Linux pidfds."""
+"""Inspect or stop only an explicitly selected, current-user Gufo model."""
 from __future__ import annotations
 
 import argparse
@@ -117,14 +117,12 @@ def _matching_identity(proc_root: Path, pid: int, uid: int,
         return None
 
 
-def stop_matching(model: str | Path, *, proc_root: Path = Path('/proc'),
-                  uid: int | None = None) -> dict:
-    """Stop verified matches. proc_root/uid are injectable only for unit tests."""
+def _select_matches(model: str | Path, *, proc_root: Path,
+                    uid: int | None) -> tuple[str, int, list[ProcessIdentity]]:
     if not str(model):
         raise StopFailure('An explicit model path is required.')
     target = str(Path(model).expanduser().resolve())
     current_uid = os.getuid() if uid is None else uid
-    stopped = []
     candidates = []
     for directory in proc_root.iterdir():
         if not directory.name.isascii() or not directory.name.isdecimal():
@@ -136,6 +134,21 @@ def stop_matching(model: str | Path, *, proc_root: Path = Path('/proc'),
         if identity is not None:
             candidates.append(identity)
     candidates.sort(key=lambda identity: identity.pid)
+    return target, current_uid, candidates
+
+
+def status_matching(model: str | Path, *, proc_root: Path = Path('/proc'),
+                    uid: int | None = None) -> dict:
+    """Report a read-only snapshot of verified matches without opening pidfds."""
+    target, _, candidates = _select_matches(model, proc_root=proc_root, uid=uid)
+    return {'model': target, 'running_pids': [identity.pid for identity in candidates]}
+
+
+def stop_matching(model: str | Path, *, proc_root: Path = Path('/proc'),
+                  uid: int | None = None) -> dict:
+    """Stop verified matches. proc_root/uid are injectable only for unit tests."""
+    target, current_uid, candidates = _select_matches(model, proc_root=proc_root, uid=uid)
+    stopped = []
     if candidates and (not callable(getattr(os, 'pidfd_open', None)) or
                        not callable(getattr(signal, 'pidfd_send_signal', None))):
         raise StopFailure('Linux pidfd support is required; no process was signalled.')
@@ -181,14 +194,20 @@ def stop_matching(model: str | Path, *, proc_root: Path = Path('/proc'),
 def main() -> int:
     parser = argparse.ArgumentParser(description=(
         'Send SIGTERM only to your Gufo serve processes using the exact selected model. '
-        'Wait up to 15 seconds; never force-kill or stop another model.'))
+        'Wait up to 15 seconds; never force-kill or stop another model. '
+        'Use --status to report matching PIDs without stopping them.'))
     parser.add_argument('--model', required=True, help='Exact model path selected for replacement')
+    parser.add_argument('--status', action='store_true',
+                        help='Report matching PIDs without opening pidfds, signalling, or waiting')
     arguments = parser.parse_args()
     try:
-        result = stop_matching(arguments.model)
+        result = (status_matching(arguments.model) if arguments.status
+                  else stop_matching(arguments.model))
     except (StopFailure, OSError) as error:
+        pids_key = 'running_pids' if arguments.status else 'stopped_pids'
+        pids = [] if arguments.status else getattr(error, 'stopped_pids', [])
         print(json.dumps({'model': str(Path(arguments.model).expanduser().resolve()),
-                          'stopped_pids': getattr(error, 'stopped_pids', []),
+                          pids_key: pids,
                           'error': str(error)}))
         return 1
     print(json.dumps(result))

@@ -2,6 +2,7 @@
 import importlib.util
 import contextlib
 import io
+import json
 import os
 from pathlib import Path
 import signal
@@ -148,9 +149,76 @@ class StopPreviousGufoTests(unittest.TestCase):
         self.send.assert_not_called()
         self.close.assert_called_once_with(700)
 
+    def test_status_reports_sorted_exact_matches_without_process_actions(self):
+        self.process(809)
+        self.process(701)
+        self.process(702, exe='bash', argv=['bash', '-c', f'gufo serve --model {self.model}'])
+        self.process(703, argv=['gufo', 'serve', '--model', str(self.model) + '.backup'])
+        self.process(704, uid=self.uid + 1)
+        self.process(705, effective_uid=self.uid + 1)
+        self.process(706, state='Z')
+        self.process(707, exe='gufo-server')
+        (self.binary_dir / 'gufo-server').write_bytes(b'#!/bin/sh\n')
+        self.process(708, argv=['gufo', 'serve', '--model', str(self.model), '--model', '/different'])
+        result = MODULE.status_matching(self.model, proc_root=self.proc, uid=self.uid)
+        self.assertEqual(result, {'model': str(self.model), 'running_pids': [701, 809]})
+        self.fd.assert_not_called()
+        self.send.assert_not_called()
+        self.close.assert_not_called()
+        self.poller.poll.assert_not_called()
+        MODULE.select.poll.assert_not_called()
+
+    def test_status_rejects_identity_change_during_inspection(self):
+        self.process(801)
+        read_identity = MODULE._stat_identity
+        def change_identity(directory, pid):
+            identity = read_identity(directory, pid)
+            self.stat(pid, 999)
+            return identity
+        with mock.patch.object(MODULE, '_stat_identity', side_effect=change_identity):
+            result = MODULE.status_matching(self.model, proc_root=self.proc, uid=self.uid)
+        self.assertEqual(result['running_pids'], [])
+        self.fd.assert_not_called()
+        self.send.assert_not_called()
+
+    def test_status_resolves_model_alias_without_pidfd_support(self):
+        alias = self.root / 'model alias.gguf'
+        alias.symlink_to(self.model)
+        self.process(901, argv=['gufo', 'serve', '--model=models/original Flash.gguf'])
+        with mock.patch.object(MODULE.os, 'pidfd_open', None), \
+                mock.patch.object(MODULE.signal, 'pidfd_send_signal', None):
+            result = MODULE.status_matching(alias, proc_root=self.proc, uid=self.uid)
+        self.assertEqual(result, {'model': str(self.model), 'running_pids': [901]})
+        MODULE.select.poll.assert_not_called()
+
+    def test_status_cli_returns_empty_success_and_reports_errors(self):
+        for failure, expected_code in ((None, 0), (OSError('cannot scan proc'), 1)):
+            with self.subTest(failure=failure):
+                output = io.StringIO()
+                with mock.patch.object(sys, 'argv', [str(SCRIPT), '--status', '--model', str(self.model)]), \
+                        mock.patch.object(MODULE, 'status_matching',
+                                          return_value={'model': str(self.model), 'running_pids': []},
+                                          side_effect=failure), \
+                        mock.patch.object(MODULE, 'stop_matching') as stop, \
+                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                    try:
+                        code = MODULE.main()
+                    except SystemExit as error:
+                        code = error.code
+                self.assertEqual(code, expected_code)
+                result = json.loads(output.getvalue())
+                self.assertEqual(result['model'], str(self.model))
+                self.assertEqual(result['running_pids'], [])
+                self.assertNotIn('stopped_pids', result)
+                if failure:
+                    self.assertIn('cannot scan proc', result['error'])
+                stop.assert_not_called()
+
     def test_cli_requires_model_and_help_never_scans_processes(self):
-        with mock.patch.object(MODULE, 'stop_matching') as stop:
-            for arguments, code in (([], 2), (['--help'], 0)):
+        with mock.patch.object(MODULE, 'stop_matching') as stop, \
+                mock.patch.object(MODULE, 'status_matching') as status:
+            for arguments, code in (([], 2), (['--status'], 2), (['--help'], 0),
+                                    (['--status', '--help'], 0)):
                 output, errors = io.StringIO(), io.StringIO()
                 with mock.patch.object(sys, 'argv', [str(SCRIPT), *arguments]), \
                         contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
@@ -159,6 +227,7 @@ class StopPreviousGufoTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, code)
                 self.assertIn('--model', output.getvalue() + errors.getvalue())
             stop.assert_not_called()
+            status.assert_not_called()
 
 
 if __name__ == '__main__':
