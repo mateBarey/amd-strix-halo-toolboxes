@@ -12,36 +12,14 @@ RUN dnf -y --nodocs --setopt=install_weak_deps=False install \
       bash ca-certificates coreutils curl git-core tar xz \
     && dnf clean all && rm -rf /var/cache/dnf/*
 
+COPY toolboxes/gufo-nix/build/ /opt/gufo-toolbox/build/
+
 # Import the official, checksum-verified Nix binary distribution. No installer
 # runs, and no /home, /root profile, systemd unit or host configuration is used.
 # An explicit Bash command also works with Podman's default OCI image format,
-# which does not preserve Docker's SHELL setting.
-RUN /bin/bash -euo pipefail -s <<'EOF'
-test "$(uname -m)" = x86_64
-test -s /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
-install -d /etc/nix /nix/store /nix/var/nix/gcroots /opt
-cat > /etc/nix/nix.conf <<'NIXCONF'
-experimental-features = nix-command flakes
-sandbox = false
-build-users-group =
-accept-flake-config = false
-NIXCONF
-archive="nix-${NIX_VERSION}-x86_64-linux.tar.xz"
-curl --fail --location --retry 3 \
-  "https://releases.nixos.org/nix/nix-${NIX_VERSION}/${archive}" \
-  --output "/tmp/${archive}"
-printf '%s  %s\n' "$NIX_SHA256" "/tmp/${archive}" | sha256sum --check --strict
-tar -xJf "/tmp/${archive}" -C /tmp
-bootstrap="/tmp/nix-${NIX_VERSION}-x86_64-linux"
-cp -a "$bootstrap/store/." /nix/store/
-nix_roots=(/nix/store/*-nix-"$NIX_VERSION")
-test "${#nix_roots[@]}" -eq 1
-ln -s "${nix_roots[0]}" /opt/nix
-/opt/nix/bin/nix-store --load-db < "$bootstrap/.reginfo"
-ln -s "${nix_roots[0]}" /nix/var/nix/gcroots/gufo-nix-client
-/opt/nix/bin/nix --version
-rm -rf "$bootstrap" "/tmp/${archive}"
-EOF
+# which does not preserve Docker's SHELL setting. Plain script files also
+# support older Podman/Buildah versions without Dockerfile RUN heredocs.
+RUN /bin/bash -euo pipefail /opt/gufo-toolbox/build/bootstrap-nix.sh
 
 # Fedora 44 removed the old /etc/pki/tls/certs/ca-bundle.crt compatibility link.
 ENV NIX_SSL_CERT_FILE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
@@ -50,32 +28,7 @@ COPY toolboxes/gufo-nix/flake.nix toolboxes/gufo-nix/flake.lock \
 
 # The locked upstream package supplies HIP, hipBLASLt and patched ROCr from
 # one ROCm version. Both tuning tools are built from the same Gufo source.
-RUN /bin/bash -euo pipefail -s <<'EOF'
-test -s "$NIX_SSL_CERT_FILE"
-[[ "$NIX_BUILD_CORES" =~ ^[1-9][0-9]*$ ]]
-[[ "$NIX_MAX_JOBS" =~ ^[1-9][0-9]*$ ]]
-flake=path:/opt/gufo-toolbox/flake
-/opt/nix/bin/nix build -L --no-update-lock-file \
-  --cores "$NIX_BUILD_CORES" --max-jobs "$NIX_MAX_JOBS" \
-  --out-link /opt/gufo "$flake#default"
-/opt/nix/bin/nix develop --no-update-lock-file \
-  --cores "$NIX_BUILD_CORES" --max-jobs "$NIX_MAX_JOBS" \
-  --profile /opt/gufo-shell "$flake" --command true
-ln -s "$(readlink -f /opt/gufo)" /nix/var/nix/gcroots/gufo-runtime
-ln -s "$(readlink -f /opt/gufo-shell)" /nix/var/nix/gcroots/gufo-tools-shell
-for input in gufoSource nixpkgsSource; do
-  source_path=$(/opt/nix/bin/nix eval --raw "$flake#lib.$input")
-  ln -s "$source_path" "/nix/var/nix/gcroots/$input"
-done
-# A profile-path `nix develop` resolves its interactive Bash via the registry.
-# Pin that lookup to the already-rooted source rather than a moving channel.
-nixpkgs_source=$(/opt/nix/bin/nix eval --raw "$flake#lib.nixpkgsSource")
-/opt/nix/bin/nix registry add --registry /etc/nix/registry.json \
-  nixpkgs "path:$nixpkgs_source"
-/opt/nix/bin/nix eval --json "$flake#lib" > /opt/gufo-toolbox/build-inputs.json
-# Retain only rooted runtime, tools shell, Nix and pinned source closures.
-/opt/nix/bin/nix-store --gc --option keep-derivations false --option keep-outputs false
-EOF
+RUN /bin/bash -euo pipefail /opt/gufo-toolbox/build/build-gufo.sh
 
 FROM registry.fedoraproject.org/fedora-toolbox:44
 LABEL com.github.containers.toolbox="true" \
@@ -97,40 +50,7 @@ COPY toolboxes/gufo-nix/convert_gufo_projector.py \
      toolboxes/gufo-nix/gufo_profile.py /opt/gufo-toolbox/
 COPY toolboxes/gufo-nix/bin/ /tmp/gufo-bin/
 
-RUN /bin/bash -euo pipefail -s <<'EOF'
-test -s /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
-# Fixed, non-login build accounts belong to the container, independent of the
-# UID Toolbx creates for its user. /nix/store is never made user-writable.
-groupadd --system --gid 30000 nixbld
-for i in {1..16}; do
-  useradd --system --uid "$((30000 + i))" --gid nixbld --groups nixbld \
-    --no-create-home --home-dir /var/empty --shell /usr/sbin/nologin "nixbld$i"
-done
-install -d -m 0755 /var/empty /usr/local/bin /usr/local/sbin /etc/sudoers.d
-chown root:nixbld /nix/store
-chmod 1775 /nix/store
-chmod 0755 /nix /nix/var /nix/var/nix
-install -m 0755 /tmp/gufo-bin/gufo-nix-start-daemon /usr/local/sbin/gufo-nix-start-daemon
-for program in nix gufo-profile gufo-tune-hipblaslt gufo-convert-projector; do
-  install -m 0755 "/tmp/gufo-bin/$program" "/usr/local/bin/$program"
-done
-for program in gufo gufo-server gufo-kernel-bench tune_hipblaslt; do
-  ln -s "/opt/gufo/bin/$program" "/usr/local/bin/$program"
-done
-cat > /etc/sudoers.d/gufo-nix-daemon <<'SUDOERS'
-ALL ALL=(root) NOPASSWD: /usr/local/sbin/gufo-nix-start-daemon ""
-SUDOERS
-chmod 0440 /etc/sudoers.d/gufo-nix-daemon
-visudo --check --file /etc/sudoers.d/gufo-nix-daemon
-python3 -m venv /opt/gufo-tools/venv
-/opt/gufo-tools/venv/bin/python3 -m pip install --no-cache-dir 'gguf==0.19.0'
-chmod -R a+rX /opt/gufo-tools
-rm -rf /tmp/gufo-bin
-/usr/local/bin/gufo --version
-/usr/local/bin/gufo-convert-projector --help >/dev/null
-/usr/local/bin/gufo-profile --help >/dev/null
-/usr/local/bin/nix --version
-EOF
+RUN /bin/bash -euo pipefail /opt/gufo-toolbox/build/setup-runtime.sh
 
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     NIX_SSL_CERT_FILE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \

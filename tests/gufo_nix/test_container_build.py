@@ -2,14 +2,15 @@
 
 No container engine, network, /nix writes, or image build is required. Build
 script probes exit before any original side effect, while retaining the real
-RUN command and script body. OCI builders may ignore Dockerfile SHELL, so an
-implicit RUN shell is deliberately represented by the OCI /bin/sh default.
+RUN command and script body. Shell options come from each actual RUN command,
+independent of Dockerfile SHELL metadata or heredoc frontend support.
 """
 import os
 from pathlib import Path
 import re
 import shlex
 import subprocess
+import tempfile
 import unittest
 
 
@@ -19,13 +20,15 @@ CANONICAL_CA = '/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem'
 REMOVED_CA = '/etc/pki/tls/certs/ca-bundle.crt'
 
 
-def run_heredocs():
-    text = DOCKERFILE.read_text()
-    pattern = re.compile(
-        r"^RUN(?P<command>[^\n]*?)\s*<<'(?P<delimiter>\w+)'\s*\n"
-        r"(?P<body>.*?)^(?P=delimiter)\s*$", re.MULTILINE | re.DOTALL)
-    return [(match.group('command').strip(), match.group('body'))
-            for match in pattern.finditer(text)]
+def run_build_scripts():
+    scripts = []
+    for line in DOCKERFILE.read_text().splitlines():
+        if not line.startswith('RUN ') or '/opt/gufo-toolbox/build/' not in line:
+            continue
+        command = shlex.split(line[4:])
+        path = ROOT / 'toolboxes/gufo-nix/build' / Path(command[-1]).name
+        scripts.append((command, path.read_text()))
+    return scripts
 
 
 def probe_build_script(command, body, failing_command):
@@ -44,15 +47,28 @@ def probe_build_script(command, body, failing_command):
     script = ''.join(lines[:preamble_end]) + injection + ''.join(lines[preamble_end:])
     # SHELL is intentionally ignored here, matching the reported Podman OCI
     # behavior. Only the executable on this individual RUN can select Bash.
-    argv = shlex.split(command) if command else ['/bin/sh', '-s']
     environment = dict(os.environ)
     for name in ('BASH_ENV', 'ENV', 'SHELLOPTS', 'BASHOPTS'):
         environment.pop(name, None)
-    return subprocess.run(argv, input=script, capture_output=True, text=True,
-                          env=environment, timeout=5)
+    with tempfile.TemporaryDirectory(prefix='gufo-build-probe-') as directory:
+        path = Path(directory) / 'script.sh'
+        path.write_text(script)
+        argv = [*command[:-1], str(path)]
+        return subprocess.run(argv, capture_output=True, text=True,
+                              env=environment, timeout=5)
 
 
 class ContainerBuildTests(unittest.TestCase):
+    def test_dockerfile_uses_plain_scripts_without_run_heredoc_frontend(self):
+        dockerfile = DOCKERFILE.read_text()
+        self.assertNotRegex(dockerfile, r'(?m)^RUN[^\n]*<<')
+        scripts = run_build_scripts()
+        self.assertEqual([command[-1] for command, _ in scripts], [
+            '/opt/gufo-toolbox/build/bootstrap-nix.sh',
+            '/opt/gufo-toolbox/build/build-gufo.sh',
+            '/opt/gufo-toolbox/build/setup-runtime.sh',
+        ])
+
     def test_all_nix_certificate_settings_use_fedora44_extracted_bundle(self):
         dockerfile = DOCKERFILE.read_text()
         config = (ROOT / 'toolboxes/gufo-nix/nix.conf').read_text()
@@ -65,12 +81,13 @@ class ContainerBuildTests(unittest.TestCase):
             self.assertEqual(path, CANONICAL_CA)
         self.assertEqual(re.findall(r'^ssl-cert-file\s*=\s*(\S+)\s*$', config, re.MULTILINE),
                          [CANONICAL_CA])
-        active_lines = '\n'.join(line for line in (dockerfile + config + daemon).splitlines()
+        build_scripts = '\n'.join(body for _, body in run_build_scripts())
+        active_lines = '\n'.join(line for line in (dockerfile + config + daemon + build_scripts).splitlines()
                                  if not line.lstrip().startswith('#'))
         self.assertNotIn(REMOVED_CA, active_lines)
 
     def test_bootstrap_checks_certificate_before_first_network_request(self):
-        scripts = run_heredocs()
+        scripts = run_build_scripts()
         self.assertEqual(len(scripts), 3)
         bootstrap = scripts[0][1]
         guard = re.search(r'^test -s [\"\']?' + re.escape(CANONICAL_CA) + r'[\"\']?\s*$',
@@ -79,7 +96,7 @@ class ContainerBuildTests(unittest.TestCase):
         self.assertLess(guard.start(), bootstrap.index('curl --fail'))
 
     def test_each_actual_run_aborts_on_early_command_failure(self):
-        scripts = run_heredocs()
+        scripts = run_build_scripts()
         self.assertEqual(len(scripts), 3)
         for index, (command, body) in enumerate(scripts, 1):
             with self.subTest(run=index):
@@ -88,7 +105,7 @@ class ContainerBuildTests(unittest.TestCase):
                 self.assertNotIn('BUILD_CONTINUED', result.stdout)
 
     def test_each_actual_run_aborts_when_left_side_of_pipeline_fails(self):
-        scripts = run_heredocs()
+        scripts = run_build_scripts()
         self.assertEqual(len(scripts), 3)
         for index, (command, body) in enumerate(scripts, 1):
             with self.subTest(run=index):

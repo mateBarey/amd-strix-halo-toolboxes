@@ -251,9 +251,9 @@ The launcher sets `GUFO_HIPBLASLT_PLAN_CACHE` **inside the container** only for 
 The earlier standalone installer's image recipe had two defects that are corrected here:
 
 - Fedora 44 removed the compatibility CA path. All builder, runtime and Nix daemon certificate settings now use `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`, the bundle named by the [Fedora change documentation](https://fedoraproject.org/wiki/Changes/droppingOfCertPemFile). The recipe checks that this bundle exists and is nonempty before network use.
-- Podman's OCI image format ignored the recipe's Docker `SHELL` instruction. Every multi-command build heredoc now explicitly invokes `/bin/bash -euo pipefail -s`, so a failed Nix build stops the image build instead of continuing into garbage collection or producing Gufo symlinks with missing targets. See Docker's [heredoc execution rules](https://docs.docker.com/reference/dockerfile/#here-documents).
+- Podman's OCI image format ignored the recipe's Docker `SHELL` instruction. Every multi-command build step now invokes a copied script with `/bin/bash -euo pipefail`, so a failed Nix build stops the image build instead of continuing into garbage collection or producing Gufo symlinks with missing targets. Keeping these commands in ordinary scripts also supports older Podman versions that cannot parse Dockerfile heredocs.
 
-The repository includes regression checks for the certificate settings and executes safe failure probes through all three actual heredoc commands. CI additionally builds the real Fedora/Nix bootstrap in Podman OCI format. A successfully built bootstrap is not a full Gufo image or GPU inference result.
+The repository includes regression checks for the certificate settings and executes safe failure probes through all three actual build-script commands. CI additionally builds the real Fedora/Nix bootstrap in Podman OCI format. A successfully built bootstrap is not a full Gufo image or GPU inference result.
 
 Repository CPU tests can be run without a GPU:
 

@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for path in scripts/gufo-nix/*.sh toolboxes/gufo-nix/bin/*; do
+          for path in scripts/gufo-nix/*.sh toolboxes/gufo-nix/bin/* toolboxes/gufo-nix/build/*.sh; do
             [[ -f "$path" ]] || continue
             IFS= read -r first_line < "$path" || true
             case "$path:$first_line" in
@@ -92,7 +92,7 @@ jobs:
   image:
     name: Build and smoke-test image without GPU
     needs: check
-    # PRs never build or publish images. Feature-branch pushes run CPU checks only.
+    # PRs and feature-branch pushes run CPU/bootstrap checks, without a full image build.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' &&
